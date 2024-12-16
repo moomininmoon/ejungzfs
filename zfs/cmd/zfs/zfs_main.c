@@ -124,7 +124,9 @@ static int zfs_do_project(int argc, char **argv);
 static int zfs_do_version(int argc, char **argv);
 static int zfs_do_redact(int argc, char **argv);
 static int zfs_do_wait(int argc, char **argv);
-
+static int zfs_do_memory_monitor(int argc, char **argv);
+ 
+static double get_memory_usage(void);
 #ifdef __FreeBSD__
 static int zfs_do_jail(int argc, char **argv);
 static int zfs_do_unjail(int argc, char **argv);
@@ -816,6 +818,8 @@ zfs_mount_and_share(libzfs_handle_t *hdl, const char *dataset, zfs_type_t type)
 
 /* moooooooomin~~~~~~~~~~~~~~~~~~~~~~~~~~~~ modified!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!*/
 
+static int memory_monitor_running = 1;
+
 static double get_memory_usage() {
     FILE *meminfo = fopen("/proc/meminfo", "r");
     if (meminfo == NULL) {
@@ -836,22 +840,22 @@ static double get_memory_usage() {
 
     fclose(meminfo);
     double used_memory = total_memory - free_memory;
-    return (used_memory / total_memory) * 100.0; // 메모리 사용 비율 계산
+    return (used_memory / total_memory) * 100.0;
 }
 
 static void send_email_alert(double memory_usage) {
-	    char command[256];
-	    snprintf(command, sizeof(command),
-		     "echo 'Memory usage is %.2f%%' | mail -s 'High Memory Usage Alert' qkdansgur2@naver.com",
-		     memory_usage);
-	    system(command);
+    char command[256];
+    snprintf(command, sizeof(command),
+	     "echo 'Memory usage is %.2f%%' | mail -s 'High Memory Usage Alert' qkdansgur2@naver.com",
+	     memory_usage);
+    int ret = system(command);
+    if (ret != 0) {
+	syslog(LOG_ERR, "Failed to send email alert");
     }
+}
 
-static void *memory_monitor_thread(void *arg) {
-    openlog("zfs_memory_monitor", LOG_PID, LOG_DAEMON);
-
+static int zfs_do_memory_monitor(int argc __attribute__((unused)), char **argv __attribute__((unused))) {
     while (memory_monitor_running) {
-	// 제어 파일을 열어 모니터링 상태를 확인
 	FILE *control = fopen(CONTROL_FILE, "r");
 	if (control) {
 	    char status[10];
@@ -874,26 +878,11 @@ static void *memory_monitor_thread(void *arg) {
 	    send_email_alert(memory_usage);
 	}
 
-	sleep(10);
+	sleep(60);
     }
 
-    closelog();
-    return NULL;
+    return 0;
 }
-static int zfs_do_memory_monitor(int argc, char **argv)
-    {
-	double memory_usage = get_memory_usage();
-	printf("현재 메모리 사용량: %.2f%%\n", memory_usage);
-
-	if (memory_usage > MEMORY_THRESHOLD) {
-	    printf("메모리 사용량이 임계값을 초과했습니다. 알림을 보냅니다...\n");
-	    send_email_alert(memory_usage);
-	}
-
-	return 0;
-    }
-
-
 
 /* moooooooomin~~~~~~~~~~~~~~~~~~~~~~~~~~~~ modified!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!*/
 /*
@@ -4772,7 +4761,7 @@ usage:
 }
 
 /*
- * Array of prefixes to exclude –
+ * Array of prefixes to exclude \u2013
  * a linear search, even if executed for each dataset,
  * is plenty good enough.
  */
@@ -9474,3 +9463,4 @@ zfs_do_unjail(int argc, char **argv)
 	return (zfs_do_jail_impl(argc, argv, B_FALSE));
 }
 #endif
+
